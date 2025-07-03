@@ -1,0 +1,19 @@
+=== LSTM vs Transformer Summary ===
+
+Best Model (Single-Step):
+Better Model
+LSTM           6
+Transformer    4
+
+Best Model (Multi-Step):
+Better Model
+Transformer    5
+LSTM           5
+
+Average RMSE (Single-Step):
+LSTM: 0.7625
+Transformer: 0.6264
+
+Average RMSE (Multi-Step):
+LSTM: 2.0914
+Transformer: 0.5072
