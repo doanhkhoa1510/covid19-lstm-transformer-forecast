@@ -1,5 +1,3 @@
-# train_lstm_all_asia_multistep.py
-
 import numpy as np
 import matplotlib.pyplot as plt
 import os
@@ -7,22 +5,21 @@ import csv
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from tensorflow.keras.optimizers import Adam
-from sklearn.metrics import mean_squared_error
 
 # === Paths ===
 RESULTS_DIR = "results/lstm"
-PLOTS_DIR = os.path.join(RESULTS_DIR, "plots")
+PLOTS_DIR = os.path.join(RESULTS_DIR, "plots_recovered_multistep")
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
-
-# === Load preprocessed multi-step data ===
-data = np.load("models/lstm/preprocessed_asia_multistep.npy", allow_pickle=True).item()
+# === Load preprocessed multi-step recovered data ===
+data = np.load("models/lstm/recovered_multistep_asia_6countries.npy", allow_pickle=True).item()
 selected_countries = list(data.keys())
 
-rmse_results = []
+results = []
 
 def train_and_evaluate(country):
-    print(f"\n=== {country} ===")
+    print(f"\n📊 Training LSTM for {country}...")
+
     X = data[country]["X"]
     y = data[country]["y"]
 
@@ -34,7 +31,7 @@ def train_and_evaluate(country):
     # Model: input = (7, 1), output = Dense(7)
     model = Sequential([
         LSTM(50, activation='relu', input_shape=(X_train.shape[1], X_train.shape[2])),
-        Dense(y_train.shape[1])  # Output 7 values
+        Dense(y_train.shape[1])
     ])
     model.compile(optimizer=Adam(0.001), loss='mse')
 
@@ -46,44 +43,45 @@ def train_and_evaluate(country):
     plt.figure(figsize=(8, 4))
     plt.plot(history.history['loss'], label='Training Loss')
     plt.plot(history.history['val_loss'], label='Validation Loss')
-    plt.title(f"{country} - Loss Curve (7-step)")
+    plt.title(f"{country} - Loss Curve (Recovered, 7-step)")
     plt.xlabel("Epoch")
     plt.ylabel("MSE Loss")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(f"{PLOTS_DIR}/{country}_loss.png")
+    plt.savefig(os.path.join(PLOTS_DIR, f"{country}_loss_recovered_multistep.png"))
     plt.close()
 
-    # Predict and calculate RMSE
+    # Predict
     y_pred = model.predict(X_test)
-    rmse = np.sqrt(np.mean((y_test - y_pred) ** 2))  # RMSE over all predicted points
-    print(f"7-step RMSE for {country}: {rmse:.4f}")
-    rmse_results.append((country, rmse))
+    rmse = np.sqrt(np.mean((y_test - y_pred) ** 2))
+    nrmse = rmse / np.mean(y_test)
+    print(f"✅ {country} RMSE (7-step): {rmse:.4f} | NRMSE: {nrmse:.4f}")
+    results.append((country, rmse, nrmse))
 
-    # Prediction plot: just 1 sample (optional)
+    # Forecast sample plot
     plt.figure(figsize=(8, 4))
     plt.plot(y_test[0], label="Actual (1st sample)")
     plt.plot(y_pred[0], label="Predicted (1st sample)")
-    plt.title(f"{country} - 7-Day Forecast Example")
+    plt.title(f"{country} - Forecast (Recovered, 7-day)")
     plt.xlabel("Day Ahead")
-    plt.ylabel("Normalized Cases")
+    plt.ylabel("Normalized Recovered Cases")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(f"{PLOTS_DIR}/{country}_forecast_sample.png")
+    plt.savefig(os.path.join(PLOTS_DIR, f"{country}_forecast_recovered_multistep.png"))
     plt.close()
 
-# === Train all countries ===
+# === Train model for each country ===
 for country in selected_countries:
     train_and_evaluate(country)
 
-# === Save RMSE to CSV ===
-with open(os.path.join(RESULTS_DIR, "lstm_rmse_multistep.csv"), "w", newline='') as f:
+# === Save results to CSV ===
+csv_path = os.path.join(RESULTS_DIR, "lstm_rmse_recovered_multistep.csv")
+with open(csv_path, "w", newline='') as f:
     writer = csv.writer(f)
-    writer.writerow(["Country", "7-Day RMSE"])
-    writer.writerows(rmse_results)
+    writer.writerow(["Country", "RMSE", "NRMSE"])
+    writer.writerows(results)
 
-
-
-print(f"\n✅ Multi-step results saved to: {RESULTS_DIR}/lstm_rmse_multistep.csv")
+print(f"\n📁 All plots saved in: {PLOTS_DIR}")
+print(f"📄 RMSE results saved to: {csv_path}")

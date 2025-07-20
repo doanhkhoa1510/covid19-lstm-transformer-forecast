@@ -17,3 +17,12 @@ Transformer: 0.6264
 Average RMSE (Multi-Step):
 LSTM: 2.0914
 Transformer: 0.5072
+
+
+
+| Aspect                             | Winner                 | Why                                  |
+| ---------------------------------- | ---------------------- | ------------------------------------ |
+| **Best Model Count (Single-Step)** | LSTM (6 vs 4)          | More consistent across countries     |
+| **Best Model Count (Multi-Step)**  | Tie (5 vs 5)           | Country-dependent results            |
+| **Average RMSE (Single-Step)**     | ✅ Transformer          | Lower average RMSE overall           |
+| **Average RMSE (Multi-Step)**      | ✅ Transformer (by far) | Much more stable across long horizon |

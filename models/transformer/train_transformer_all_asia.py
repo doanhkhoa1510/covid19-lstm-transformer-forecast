@@ -1,4 +1,4 @@
-# train_transformer_all_asia.py
+# transformer/train_transformer_all_asia.py
 
 import numpy as np
 import os
@@ -7,25 +7,26 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error
 from tensorflow.keras import Model
 from tensorflow.keras.layers import (
-    Input, Dense, LayerNormalization, Dropout,
+    Input, Dense, Dropout, LayerNormalization,
     MultiHeadAttention, Add, GlobalAveragePooling1D
 )
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
 
 # === Paths ===
-RESULTS_DIR = "results/transformer"
-PLOTS_DIR = os.path.join(RESULTS_DIR, "plots")
+PLOTS_DIR = "results/transformer/plots_recovered_singlestep"
+CSV_PATH = "results/transformer/transformer_rmse_recovered_singlestep.csv"
 os.makedirs(PLOTS_DIR, exist_ok=True)
+os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
 
-# === Load Preprocessed Data ===
-data = np.load("models/lstm/preprocessed_asia.npy", allow_pickle=True).item()
+# === Load preprocessed data ===
+data = np.load("models/lstm/recovered_single_asia_6countries.npy", allow_pickle=True).item()
 selected_countries = list(data.keys())
+results = []
 
-rmse_results = []
-
-# === Transformer Block ===
-def transformer_block(inputs, head_size=64, num_heads=2, ff_dim=128, dropout=0.1):
-    x = MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(inputs, inputs)
+# === Minimal Transformer Block ===
+def minimal_transformer_block(inputs, head_size=32, num_heads=1, ff_dim=64, dropout=0.05):
+    x = MultiHeadAttention(num_heads=num_heads, key_dim=head_size, dropout=dropout)(inputs, inputs)
     x = Add()([x, inputs])
     x = LayerNormalization(epsilon=1e-6)(x)
 
@@ -38,56 +39,76 @@ def transformer_block(inputs, head_size=64, num_heads=2, ff_dim=128, dropout=0.1
 # === Build Transformer Model ===
 def build_model(input_shape):
     inputs = Input(shape=input_shape)
-    x = transformer_block(inputs)
+    x = minimal_transformer_block(inputs)
     x = GlobalAveragePooling1D()(x)
-    x = Dropout(0.1)(x)
-    x = Dense(1)(x)
-    return Model(inputs, x)
+    x = Dropout(0.05)(x)
+    outputs = Dense(1)(x)
+    return Model(inputs, outputs)
 
 # === Train & Evaluate ===
-def train_country(country):
-    print(f"\n=== {country} ===")
+def train_and_evaluate(country):
+    print(f"\n📊 Training Transformer for {country}...")
+
     X = data[country]["X"]
     y = data[country]["y"]
 
-    # Split
     split_index = int(len(X) * 0.8)
     X_train, X_test = X[:split_index], X[split_index:]
     y_train, y_test = y[:split_index], y[split_index:]
 
-    # Build & train
-    model = build_model(input_shape=(X_train.shape[1], X_train.shape[2]))
+    model = build_model(input_shape=(X.shape[1], X.shape[2]))
     model.compile(optimizer=Adam(0.001), loss="mse")
-    history = model.fit(X_train, y_train, epochs=100, batch_size=8,
-                        validation_data=(X_test, y_test), verbose=0)
 
-    # Predict & evaluate
-    y_pred = model.predict(X_test)
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    print(f"RMSE: {rmse:.4f}")
-    rmse_results.append((country, rmse))
+    es = EarlyStopping(patience=10, restore_best_weights=True)
+    history = model.fit(
+        X_train, y_train,
+        epochs=50,
+        batch_size=4,
+        validation_data=(X_test, y_test),
+        verbose=0,
+        callbacks=[es]
+    )
 
-    # Plot example
+    # === Loss Plot ===
     plt.figure(figsize=(8, 4))
-    plt.plot(y_test, label="Actual")
-    plt.plot(y_pred, label="Predicted")
-    plt.title(f"{country} - Transformer Forecast")
-    plt.xlabel("Time Step")
-    plt.ylabel("Normalized Cases")
+    plt.plot(history.history["loss"], label="Training Loss")
+    plt.plot(history.history["val_loss"], label="Validation Loss")
+    plt.title(f"{country} - Loss Curve")
+    plt.xlabel("Epoch")
+    plt.ylabel("MSE")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(f"{PLOTS_DIR}/{country}_forecast.png")
+    plt.savefig(f"{PLOTS_DIR}/{country}_loss.png")
     plt.close()
 
-# === Loop through countries ===
-for country in selected_countries:
-    train_country(country)
+    # === Prediction Plot ===
+    y_pred = model.predict(X_test)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    print(f"✅ {country} RMSE: {rmse:.4f}")
+    results.append((country, rmse))
 
-# === Save RMSE ===
-with open(os.path.join(RESULTS_DIR, "transformer_rmse_results.csv"), "w", newline="") as f:
+    plt.figure(figsize=(8, 4))
+    plt.plot(y_test, label="Actual")
+    plt.plot(y_pred, label="Predicted")
+    plt.title(f"{country} - Actual vs Predicted")
+    plt.xlabel("Time Step")
+    plt.ylabel("Normalized Recovered Cases")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(f"{PLOTS_DIR}/{country}_prediction.png")
+    plt.close()
+
+# === Train All Countries ===
+for country in selected_countries:
+    train_and_evaluate(country)
+
+# === Save to CSV ===
+with open(CSV_PATH, "w", newline="") as f:
     writer = csv.writer(f)
     writer.writerow(["Country", "RMSE"])
-    writer.writerows(rmse_results)
+    writer.writerows(results)
 
-print("\n✅ Done. Results saved to results/transformer/transformer_rmse_results.csv")
+print(f"\n📁 All plots saved in: {PLOTS_DIR}")
+print(f"📄 RMSE results saved to: {CSV_PATH}")
