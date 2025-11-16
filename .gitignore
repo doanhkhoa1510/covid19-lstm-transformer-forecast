@@ -155,9 +155,15 @@ env36/
 *.npy        # Preprocessed NumPy arrays
 *.h5         # Saved model weights
 
-# Keep results (CSV/plots)
+# Keep result CSVs (tracked)
 !*.csv       # Keep: result files for RMSE etc.
-!*.png       # Keep: plots of loss, forecast, etc.
+
+# Ignore plots/images (do not track .png/.jpg etc.)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
 
 # Ignore virtual env if not already handled
 .venv/
