@@ -1,77 +1,110 @@
-import pandas as pd
+# models/lstm/train_lstm_all_asia_singlestep.py
+
 import numpy as np
-from sklearn.preprocessing import MinMaxScaler
-import pywt
+import matplotlib.pyplot as plt
 import os
+import csv
+import random
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Input
+from tensorflow.keras.optimizers import Adam
+from sklearn.metrics import mean_squared_error
 
-WINDOW_SIZE = 30
-FORECAST_HORIZON = 7
-SELECTED_COUNTRIES = [
-    "Vietnam", "Singapore", "Bangladesh",
-    "India", "Philippines", "Thailand"
-]
+# === Reproducibility ===
+np.random.seed(42)
+tf.random.set_seed(42)
+random.seed(42)
 
-def load_data():
-    # ✅ Use the fixed CSV file with forward-filled recovered data
-    df = pd.read_csv("data/time_series_covid19_recovered_global_fixed.csv")
-    df["Date"] = pd.to_datetime(df["Date"])
-    return df
+# === Paths ===
+PLOTS_DIR = "results/lstm/plots_recovered_singlestep"
+METRICS_PATH = "results/lstm/lstm_rmse_recovered_singlestep.csv"
+os.makedirs(PLOTS_DIR, exist_ok=True)
+os.makedirs(os.path.dirname(METRICS_PATH), exist_ok=True)
 
-def apply_wavelet(signal, wavelet="db1", level=2):
-    coeffs = pywt.wavedec(signal, wavelet, level=level)
-    coeffs[1:] = [np.zeros_like(c) for c in coeffs[1:]]  # Only keep approximation
-    return pywt.waverec(coeffs, wavelet)[:len(signal)]
+# === Load preprocessed single-step data (with scalers) ===
+data = np.load("models/lstm/recovered_single_asia_6countries.npy", allow_pickle=True).item()
+selected_countries = list(data.keys())
 
-def create_multistep_sequences(series, window_size=WINDOW_SIZE, horizon=FORECAST_HORIZON):
-    X, y = [], []
-    for i in range(len(series) - window_size - horizon + 1):
-        X.append(series[i : i + window_size])
-        y.append(series[i + window_size : i + window_size + horizon])
-    return np.array(X), np.array(y)
+# === Container to store metrics ===
+results = []
 
-def preprocess_country(df, country_name):
-    country_df = df[df["Country"] == country_name].copy()
-    raw_cases = country_df["Recovered"].values
+def train_and_evaluate(country):
+    print(f"\n📊 Training LSTM for {country}...")
 
-    # 🧼 Trim off trailing flat data after last meaningful update
-    diffs = np.diff(raw_cases)
-    if np.any(diffs != 0):
-        last_valid_index = np.max(np.nonzero(diffs)[0]) + 1
-        trimmed = raw_cases[:last_valid_index + 1]
-    else:
-        trimmed = raw_cases  # All values are constant
+    X = data[country]["X"]
+    y = data[country]["y"]
 
-    # 📉 Smooth the trimmed signal
-    smoothed = apply_wavelet(trimmed)
+    # 80/20 Split (preserve temporal order)
+    split_index = int(len(X) * 0.8)
+    X_train, X_test = X[:split_index], X[split_index:]
+    y_train, y_test = y[:split_index], y[split_index:]
 
-    # 🔢 Normalize
-    scaler = MinMaxScaler()
-    normalized = scaler.fit_transform(smoothed.reshape(-1, 1)).flatten()
+    # === Model Architecture ===
+    model = Sequential([
+        Input(shape=(X_train.shape[1], X_train.shape[2])),
+        LSTM(50, activation='tanh'),
+        Dense(1)
+    ])
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
 
-    # ⏱ Create sequences for multistep forecasting
-    X, y = create_multistep_sequences(normalized)
-    X = X.reshape((X.shape[0], X.shape[1], 1))
+    # === Train ===
+    history = model.fit(
+        X_train, y_train,
+        epochs=100,
+        batch_size=8,
+        validation_data=(X_test, y_test),
+        verbose=0
+    )
 
-    return X, y, scaler
+    # === Plot: Loss Curve ===
+    plt.figure(figsize=(8, 4))
+    plt.plot(history.history['loss'], label='Training Loss')
+    plt.plot(history.history['val_loss'], label='Validation Loss')
+    plt.title(f"{country} - Loss Curve")
+    plt.xlabel("Epoch")
+    plt.ylabel("MSE")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOTS_DIR, f"{country}_loss.png"))
+    plt.close()
 
-def main():
-    df = load_data()
-    country_data = {}
+    # === Predict ===
+    y_pred = model.predict(X_test)
 
-    for country in SELECTED_COUNTRIES:
-        X, y, scaler = preprocess_country(df, country)
-        country_data[country] = {
-            "X": X,
-            "y": y,
-            "scaler": scaler
-        }
-        print(f"{country}: X shape = {X.shape}, y shape = {y.shape}")
+    # === Denormalize both predictions and actuals ===
+    scaler = data[country]["scaler"]
+    y_test_denorm = scaler.inverse_transform(y_test.reshape(-1, 1)).flatten()
+    y_pred_denorm = scaler.inverse_transform(y_pred.reshape(-1, 1)).flatten()
 
-    # ✅ Save to the correct output file
-    os.makedirs("models/lstm", exist_ok=True)
-    outpath = "models/lstm/recovered_multistep_asia_6countries.npy"
-    np.save(outpath, country_data, allow_pickle=True)
-    print(f"\n✅ Saved preprocessed data to: {outpath}")
+    # === Compute true RMSE / NRMSE ===
+    rmse = np.sqrt(mean_squared_error(y_test_denorm, y_pred_denorm))
+    nrmse = rmse / np.mean(y_test_denorm)
+    print(f"✅ {country} RMSE (unnormalized): {rmse:.4f} | NRMSE: {nrmse:.4f}")
+    results.append((country, rmse, nrmse))
 
-if __name__ == "__main__":
-    main()
+    # === Plot: Prediction vs Actual ===
+    plt.figure(figsize=(8, 4))
+    plt.plot(y_test_denorm, label='Actual')
+    plt.plot(y_pred_denorm, label='Predicted')
+    plt.title(f"{country} - Actual vs Predicted (Unnormalized)")
+    plt.xlabel("Time Step")
+    plt.ylabel("Recovered Cases")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOTS_DIR, f"{country}_prediction.png"))
+    plt.close()
+
+# === Train across all countries ===
+for country in selected_countries:
+    train_and_evaluate(country)
+
+# === Save metrics ===
+with open(METRICS_PATH, "w", newline='') as f:
+    writer = csv.writer(f)
+    writer.writerow(["Country", "RMSE (Unnormalized)", "NRMSE"])
+    writer.writerows(results)
+
+print(f"\n🏁 All done. Metrics saved to: {METRICS_PATH}")
