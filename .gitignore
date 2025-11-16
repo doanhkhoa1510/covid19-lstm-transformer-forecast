@@ -152,7 +152,7 @@ env36/
 # === Your forecasting-specific ignores ===
 
 # Ignore big internal files
-*.npy        # Preprocessed NumPy arrays
+# (keep .npy tracked; remove any entry for *.npy if present)
 *.h5         # Saved model weights
 
 # Keep result CSVs (tracked)
